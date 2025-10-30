@@ -1,20 +1,158 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+// In App.js
+import React, { useState, useEffect } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from './firebaseConfig';
+import { Ionicons } from '@expo/vector-icons';
+import { ActivityIndicator, View, StyleSheet } from 'react-native';
 
+// Import all necessary screens
+import LoginScreen from './screens/LoginScreen';
+import RegisterScreen from './screens/RegisterScreen';
+import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
+import SelectSemesterScreen from './screens/SelectSemesterScreen';
+// Student Screens
+import DashboardScreen from './screens/DashboardScreen';
+import ProfileScreen from './screens/ProfileScreen';
+import TimetableScreen from './screens/TimetableScreen';
+import CalculatorScreen from './screens/CalculatorScreen';
+// Faculty Screens
+import FacultyDashboardScreen from './screens/FacultyDashboardScreen';
+import TakeAttendanceScreen from './screens/TakeAttendanceScreen';
+import CancelClassScreen from './screens/CancelClassScreen';
+import DeclareHolidayScreen from './screens/DeclareHolidayScreen';
+
+const Stack = createNativeStackNavigator();
+const Tab = createBottomTabNavigator();
+
+// --- AUTHENTICATION STACK ---
+function AuthStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="Login" component={LoginScreen} />
+      <Stack.Screen name="Register" component={RegisterScreen} />
+      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} /> 
+    </Stack.Navigator>
+  );
+}
+
+// --- STUDENT BOTTOM TAB NAVIGATOR ---
+function StudentTabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarIcon: ({ focused, color, size }) => {
+          let iconName;
+          if (route.name === 'Dashboard') iconName = focused ? 'home' : 'home-outline';
+          else if (route.name === 'Analytics') iconName = focused ? 'analytics' : 'analytics-outline';
+          else if (route.name === 'Profile') iconName = focused ? 'person-circle' : 'person-circle-outline';
+          return <Ionicons name={iconName} size={size} color={color} />;
+        },
+        tabBarActiveTintColor: '#007AFF',
+        tabBarInactiveTintColor: 'gray',
+      })}
+    >
+      <Tab.Screen name="Dashboard" component={DashboardScreen} />
+      <Tab.Screen name="Analytics" component={CalculatorScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
+    </Tab.Navigator>
+  );
+}
+
+// --- MAIN NAVIGATOR COMPONENT (Handles routing based on user state) ---
+const AppNavigator = () => {
+  const [user, setUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(undefined);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+
+  // Effect 1: Listen for Authentication changes
+  useEffect(() => {
+    const authSubscriber = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoadingAuth(false);
+      if (currentUser) {
+        setLoadingProfile(true);
+      } else {
+        setUserProfile(null);
+      }
+    });
+    return authSubscriber;
+  }, []);
+
+  // Effect 2: Listen for User Profile changes
+  useEffect(() => {
+    let profileSubscriber = null;
+    if (user && loadingProfile) {
+      const userDocRef = doc(db, 'users', user.uid);
+      profileSubscriber = onSnapshot(userDocRef, (doc) => {
+        setUserProfile(doc.exists() ? doc.data() : null);
+        setLoadingProfile(false);
+      }, (error) => {
+        console.error("Error fetching user profile:", error);
+        setUserProfile(null);
+        setLoadingProfile(false);
+      });
+    } else if (!user) {
+      setUserProfile(null);
+    }
+    return () => {
+      if (profileSubscriber) {
+        profileSubscriber();
+      }
+    };
+  }, [user, loadingProfile]);
+
+  // Show loading indicator
+  if (loadingAuth || loadingProfile) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
+  // --- Render the correct navigator based on the final user state ---
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      {!user ? (
+        <Stack.Screen name="Auth" component={AuthStack} />
+      ) : userProfile?.role === 'faculty' ? (
+        <>
+          <Stack.Screen name="FacultyDashboard" component={FacultyDashboardScreen} />
+          <Stack.Screen name="TakeAttendance" component={TakeAttendanceScreen} options={{ title: 'Digital Register', headerShown: true }}/>
+          <Stack.Screen name="CancelClass" component={CancelClassScreen} options={{ title: 'Cancel a Class', headerShown: true }}/>
+          <Stack.Screen name="DeclareHoliday" component={DeclareHolidayScreen} options={{ title: 'Declare a Holiday', headerShown: true }}/>
+        </>
+      ) : userProfile?.semester ? (
+        <>
+          <Stack.Screen name="StudentApp" component={StudentTabs} />
+          <Stack.Screen name="Timetable" component={TimetableScreen} options={{ title: 'My Timetable', headerShown: true }}/>
+        </>
+      ) : (
+        <Stack.Screen name="SelectSemester" component={SelectSemesterScreen} />
+      )}
+    </Stack.Navigator>
+  );
+};
+
+// --- Main App Component ---
 export default function App() {
   return (
-    <View style={styles.container}>
-      <Text>Open up App.js to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <NavigationContainer>
+      <AppNavigator />
+    </NavigationContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    }
 });
