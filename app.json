@@ -20,7 +20,6 @@
         "backgroundColor": "#ffffff"
       },
       "permissions": [
-        "android.permission.CAMERA",
         "android.permission.CAMERA"
       ],
       "package": "com.babuaryan.academix"
@@ -31,6 +30,12 @@
     "plugins": [
       "expo-barcode-scanner",
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "13b3c38e-b18f-41e2-bc64-a7f64cc7071c"
+      }
+    },
+    "owner": "babuaryan"
   }
 }

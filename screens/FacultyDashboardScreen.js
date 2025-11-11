@@ -20,7 +20,6 @@ const FacultyDashboardScreen = ({ navigation }) => {
 
       <View style={styles.grid}>
         
-        {/* --- THIS BUTTON IS UPDATED --- */}
         <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('TakeAttendance')}>
           <Ionicons name="checkmark-done-circle-outline" size={40} color="#007AFF" />
           <Text style={styles.cardText}>Take Attendance</Text>
@@ -35,6 +34,13 @@ const FacultyDashboardScreen = ({ navigation }) => {
           <Ionicons name="calendar-outline" size={40} color="#388E3C" />
           <Text style={styles.cardText}>Declare a Holiday</Text>
         </TouchableOpacity>
+
+        {/* --- ADD THIS NEW BUTTON FOR CREATING EVENTS --- */}
+        <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('CreateEvent')}>
+          <Ionicons name="megaphone-outline" size={40} color="#7B1FA2" />
+          <Text style={styles.cardText}>Create Event</Text>
+        </TouchableOpacity>
+
       </View>
     </View>
   );

@@ -9,15 +9,15 @@ import RNPickerSelect from 'react-native-picker-select';
 const TakeAttendanceScreen = ({ navigation }) => {
   const insets = useSafeAreaInsets();
   const [myTodayClasses, setMyTodayClasses] = useState([]);
-  const [selectedClassInfo, setSelectedClassInfo] = useState(null); // Holds { id, duration, semester }
+  const [selectedClassInfo, setSelectedClassInfo] = useState(null); // Will hold { id, duration, semester }
   const [studentList, setStudentList] = useState([]);
   const [attendanceData, setAttendanceData] = useState({}); // Stores { studentId: attendedUnits }
   const [existingRecords, setExistingRecords] = useState({}); // Stores existing doc IDs { studentId: docId }
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [hasSubmittedOnce, setHasSubmittedOnce] = useState(false); // Track initial submission
+  const [hasSubmittedOnce, setHasSubmittedOnce] = useState(false); // Tracks initial submission
 
-  // Fetch classes taught by this professor today
+  // Fetch classes taught by this professor today (unchanged)
   useEffect(() => {
     const fetchTodayClasses = async () => {
       setLoading(true);
@@ -36,14 +36,13 @@ const TakeAttendanceScreen = ({ navigation }) => {
               value: {
                   id: data.mainCourseId,
                   duration: data.duration || 1,
-                  semester: doc.ref.parent.parent.id // e.g., 'sem1'
+                  semester: doc.ref.parent.parent.id
               }
             };
         });
         setMyTodayClasses(classes);
       } catch (error) {
         console.error("Error fetching classes:", error);
-        Alert.alert("Error", "Could not fetch classes. Ensure Firestore index is built.");
       } finally {
         setLoading(false);
       }
@@ -51,7 +50,8 @@ const TakeAttendanceScreen = ({ navigation }) => {
     fetchTodayClasses();
   }, []);
 
-  // Fetch students and check for existing records when a class is selected
+  // --- THIS FUNCTION IS NOW MUCH SMARTER ---
+  // Fetches students AND checks for existing attendance records for today
   useEffect(() => {
     const fetchStudentsAndAttendance = async () => {
       if (!selectedClassInfo) {
@@ -69,62 +69,64 @@ const TakeAttendanceScreen = ({ navigation }) => {
       const todayDateString = new Date().toISOString().split('T')[0];
 
       try {
-        // Fetch students for the semester
+        // 1. Fetch all students for the selected class's semester
         const studentsQuery = query(collection(db, 'users'), where('role', '==', 'student'), where('semester', '==', selectedClassInfo.semester));
         const studentsSnapshot = await getDocs(studentsQuery);
         const students = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setStudentList(students);
 
-        // Fetch any existing attendance records for these students for this class today
+        // 2. Fetch any attendance records already submitted for this class today
         const existingAttendanceQuery = query(
           collection(db, "attendance"),
           where("mainCourseId", "==", selectedClassInfo.id),
           where("date", "==", todayDateString),
-          where("userId", "in", students.length > 0 ? students.map(s => s.id) : ['dummyId']) // Firestore 'in' query needs a non-empty array
+          where("userId", "in", students.length > 0 ? students.map(s => s.id) : ['dummyId'])
         );
         const existingSnapshot = await getDocs(existingAttendanceQuery);
+        
         const records = {};
         const initialData = {};
         existingSnapshot.forEach(doc => {
-          records[doc.data().userId] = doc.id; // Store existing doc ID
-          initialData[doc.data().userId] = doc.data().attendedUnits; // Pre-fill with saved data
+          records[doc.data().userId] = doc.id; // Store existing doc ID {studentId: docId}
+          initialData[doc.data().userId] = doc.data().attendedUnits; // Store existing attendance {studentId: 2}
         });
         setExistingRecords(records);
 
-        // Pre-fill attendance: Use existing data or default to full duration
+        // 3. Pre-fill the attendance list
         students.forEach(s => {
           if (initialData[s.id] === undefined) {
-             initialData[s.id] = selectedClassInfo.duration; // Default new entries to full
+             // If no record exists, default this student to FULL attendance
+             initialData[s.id] = selectedClassInfo.duration;
           }
         });
         setAttendanceData(initialData);
 
-        // If existing records were found, consider it as already submitted once
+        // If we found any records, change the button text to "Update"
         if (Object.keys(records).length > 0) {
             setHasSubmittedOnce(true);
         }
 
       } catch (error) {
         console.error("Error fetching data:", error);
-        Alert.alert("Error", "Could not fetch student list or existing attendance.");
+        Alert.alert("Error", "Could not fetch student list or attendance.");
       } finally {
         setLoading(false);
       }
     };
     fetchStudentsAndAttendance();
-  }, [selectedClassInfo]);
+  }, [selectedClassInfo]); // Re-run this whenever the professor changes the class in the dropdown
 
   // Update state when professor taps a button
   const updateAttendance = (studentId, units) => {
     setAttendanceData(prev => ({ ...prev, [studentId]: units }));
   };
 
-  // Save all records using a batch write (Create or Update)
+  // --- THIS FUNCTION IS NOW CREATE-OR-UPDATE ---
   const handleSubmitAttendance = async () => {
     if (!selectedClassInfo) return;
     setSubmitting(true);
     const todayDateString = new Date().toISOString().split('T')[0];
-    const batch = writeBatch(db);
+    const batch = writeBatch(db); // Use a batch for atomic writes
 
     studentList.forEach(student => {
       const attendedUnits = attendanceData[student.id];
@@ -139,7 +141,7 @@ const TakeAttendanceScreen = ({ navigation }) => {
         });
       } else {
         // If record doesn't exist, CREATE it
-        const newRecordRef = doc(collection(db, "attendance")); // Auto-generate ID
+        const newRecordRef = doc(collection(db, "attendance"));
         batch.set(newRecordRef, {
           userId: student.id,
           mainCourseId: selectedClassInfo.id,
@@ -148,16 +150,12 @@ const TakeAttendanceScreen = ({ navigation }) => {
           totalDuration: selectedClassInfo.duration,
           status: attendedUnits > 0 ? 'present' : 'absent',
         });
-        // Store the new doc ID in case of further updates
-        // Note: This state update happens *after* the commit, ideally should be synchronous
-        // For simplicity, we'll update it here assuming commit succeeds
-        setExistingRecords(prev => ({...prev, [student.id]: newRecordRef.id }));
       }
     });
 
     try {
       await batch.commit();
-      setHasSubmittedOnce(true); // Mark as submitted
+      setHasSubmittedOnce(true); // Ensure button says "Update" now
       Alert.alert("Success", `Attendance ${hasSubmittedOnce ? 'updated' : 'submitted'} successfully!`);
     } catch (error) {
       Alert.alert("Error", `Failed to ${hasSubmittedOnce ? 'update' : 'submit'} attendance.`);
@@ -170,8 +168,7 @@ const TakeAttendanceScreen = ({ navigation }) => {
   const renderStudentItem = ({ item }) => {
     const attended = attendanceData[item.id];
     const duration = selectedClassInfo.duration;
-    
-    const buttons = Array.from({ length: duration + 1 }, (_, i) => i); // Generate buttons [0, 1, 2, ...]
+    const buttons = Array.from({ length: duration + 1 }, (_, i) => i); // [0, 1, 2]
 
     return (
       <View style={styles.studentRow}>
@@ -229,8 +226,10 @@ const TakeAttendanceScreen = ({ navigation }) => {
     </View>
   );
 };
+
 export default TakeAttendanceScreen;
 
+// --- Styles (Unchanged from before) ---
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5' },
   listHeader: { textAlign: 'center', paddingVertical: 10, fontSize: 14, color: '#666' },
@@ -244,7 +243,6 @@ const styles = StyleSheet.create({
   submitContainer: { padding: 20, borderTopWidth: 1, borderColor: '#ddd', backgroundColor: '#fff' },
   emptyText: { textAlign: 'center', marginTop: 30, fontSize: 16, color: 'gray'},
 });
-
 const pickerSelectStyles = StyleSheet.create({
   inputIOS: { fontSize: 16, paddingVertical: 12, paddingHorizontal: 10, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, color: 'black', backgroundColor: '#fff', marginBottom: 10, marginHorizontal: 15 },
   inputAndroid: { fontSize: 16, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, color: 'black', backgroundColor: '#fff', marginBottom: 10, marginHorizontal: 15 },
